@@ -1,0 +1,5 @@
+.idea
+**/*.csv
+data
+*.zip
+
