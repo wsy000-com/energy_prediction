@@ -1,30 +1,30 @@
-columns_to_plot = feature_cols
-n_cols = len(columns_to_plot)
+from sklearn.preprocessing import StandardScaler
 
-if n_cols == 0:
-    print("没有可画的列！")
-else:
-    n_rows = n_cols
-    fig, axes = plt.subplots(n_rows, 1, figsize=(20, n_rows * 3.5), sharex=True)
+# 准备特征和目标变量
+X_train = train_data[feature_columns]
+y_train = train_data['SPC_Value']
+X_test = test_data[feature_columns]
+y_test = test_data['SPC_Value']
 
-    if n_rows == 1:
-        axes = [axes]
+# ============ 【新增】特征标准化 ============
+scaler = StandardScaler()
 
-    # 【新增逻辑】：固定只看 site == 1 的数据，避免 X 被重复绘制 5 次
-    # 注意：这里假设你传进来的 df 是 melt 之后的 df_ml，如果里面有 site 列就过滤
-    if 'site' in df.columns:
-        df_x_plot = df[df['site'] == 1].copy()
-    else:
-        df_x_plot = df.copy()
+# 核心：只能用训练集来 fit（计算均值和方差），然后 transform 训练集和测试集
+# 注意：transform 会返回 numpy 矩阵，为了保留列名（方便后续画特征重要性图），需重新包回 DataFrame
+X_train_scaled = pd.DataFrame(
+    scaler.fit_transform(X_train), 
+    columns=X_train.columns, 
+    index=X_train.index
+)
+X_test_scaled = pd.DataFrame(
+    scaler.transform(X_test), 
+    columns=X_test.columns, 
+    index=X_test.index
+)
 
-    groups = df_x_plot['PROC_EQUIP_ID'].unique()
+# 覆盖原始变量
+X_train = X_train_scaled
+X_test = X_test_scaled
+# ==========================================
 
-    for i, col in enumerate(columns_to_plot):
-        for equip in groups:
-            # 【修改逻辑】：从过滤后的 df_x_plot 中取数据
-            mask = df_x_plot['PROC_EQUIP_ID'] == equip
-            series = df_x_plot.loc[mask, col].dropna()
-
-            if len(series) > 0:
-                axes[i].plot(series.index, series.values, linewidth=0.5,
-                            label=str(equip), alpha=0.7)
+# ============ 第七/八步：后续 XGBoost 建模代码完全不用动...
