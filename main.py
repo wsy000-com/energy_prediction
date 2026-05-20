@@ -1,5 +1,5 @@
 # ============ 把 wafer 级 SPC_Value 拆成 site 级 ============
-EXPECTED_SITES = 5   # 一个 wafer 期望测多少 site,以后换数据集改这个就行
+EXPECTED_SITES = 5  # 一个 wafer 期望测多少 site,以后换数据集改这个就行
 
 # 1. 只保留有 SPC 测量的行
 df = df.dropna(subset=['SPC_Value']).copy()
@@ -13,13 +13,44 @@ print(wafer_size.value_counts().sort_index())
 print(f"总 wafer 数: {len(wafer_size)}\n")
 
 gaps_by_n = {}
-for _, g in df.groupby(group_keys):
+
+# =========== 新增 1：准备一个字典，记录同一个 wafer 内部发生变化的列 ===========
+varying_cols_summary = {}
+# =========================================================================
+
+for name, g in df.groupby(group_keys):
     if len(g) < 2:
         continue
     gaps = g.index.to_series().diff().dt.total_seconds().dropna().tolist()
     gaps_by_n.setdefault(len(g), []).extend(gaps)
 
-print("各行数 wafer 的相邻时间间隔统计:")
+    # =========== 新增 2：排查这几行里，哪些列的值不一样 =======================
+    for col in g.columns:
+        unique_vals = g[col].dropna().unique()
+        if len(unique_vals) > 1:  # 如果这一列在同一个 wafer 里有 >1 个不同的值
+            if col not in varying_cols_summary:
+                varying_cols_summary[col] = set()
+            # 将不同的值转成 tuple 存入 set 中去重
+            varying_cols_summary[col].add(tuple(unique_vals))
+    # =========================================================================
+
+# =========== 新增 3：打印出哪些列不同，以及不同的值具体是什么 ===============
+print("\n[诊断] 同一 wafer 内部存在差异的列 (以及差异值示例):")
+if not varying_cols_summary:
+    print("  未发现差异列(完全一致)")
+else:
+    for col, val_sets in varying_cols_summary.items():
+        print(f"  => 列名: {col}")
+        # 为了避免像 Timestamp 这种每行都不同的列导致刷屏，限制只打印 3 个示例
+        sample_vals = list(val_sets)[:3]
+        for i, vals in enumerate(sample_vals, 1):
+            print(f"       示例 wafer {i} 中出现的值: {vals}")
+        if len(val_sets) > 3:
+            print(f"       ... (该列在 {len(val_sets)} 个 wafer 中都表现出了不一致)")
+print("-" * 50)
+# =========================================================================
+
+print("\n各行数 wafer 的相邻时间间隔统计:")
 for n in sorted(gaps_by_n):
     s = pd.Series(gaps_by_n[n])
     print(f"  {n} 行 wafer:gap 中位数 {s.median():.1f}s,均值 {s.mean():.1f}s,std {s.std():.2f}s,max {s.max():.1f}s")
@@ -39,14 +70,12 @@ for n, gs in gaps_by_n.items():
 # 3. 给每行分配 site_order
 df['_n'] = df.groupby(group_keys)['SPC_Value'].transform('size')
 df['_cc'] = df.groupby(group_keys).cumcount() + 1
-
 # ===== 方案 A(默认启用):不完整 wafer 缺的是末尾(缺 site_5,或 site_4-5)=====
 df['site_order'] = df['_cc']
-
 # ===== 方案 B(暂时注释):不完整 wafer 缺的是开头(缺 site_1,或 site_1-2)=====
 # df['site_order'] = df['_cc'] + (EXPECTED_SITES - df['_n'])
-
 df = df.drop(columns=['_n', '_cc'])
+
 df = df[df['site_order'].between(1, EXPECTED_SITES)].copy()
 
 # 4. 用 site_order 取对应的 SITE_x 值,覆盖原 SPC_Value
