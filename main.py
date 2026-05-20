@@ -1,40 +1,30 @@
-import matplotlib.pyplot as plt
+columns_to_plot = feature_cols
+n_cols = len(columns_to_plot)
 
-# 注意：这里的 df 应该使用你上一步 melt 之后得到的数据框（也就是 df_ml）
-# df = df_ml.copy()
+if n_cols == 0:
+    print("没有可画的列！")
+else:
+    n_rows = n_cols
+    fig, axes = plt.subplots(n_rows, 1, figsize=(20, n_rows * 3.5), sharex=True)
 
-# 获取所有的 site (1 到 5) 和设备
-sites = sorted(df['site'].unique())
-groups = df['PROC_EQUIP_ID'].unique()
+    if n_rows == 1:
+        axes = [axes]
 
-# 动态生成子图：有几个 site 就画几行，每行高度设为 3
-fig, axes = plt.subplots(len(sites), 1, figsize=(20, 3 * len(sites)), sharex=True)
+    # 【新增逻辑】：固定只看 site == 1 的数据，避免 X 被重复绘制 5 次
+    # 注意：这里假设你传进来的 df 是 melt 之后的 df_ml，如果里面有 site 列就过滤
+    if 'site' in df.columns:
+        df_x_plot = df[df['site'] == 1].copy()
+    else:
+        df_x_plot = df.copy()
 
-# 确保 axes 是个列表（应对极端情况只有一个 site 时报错）
-if len(sites) == 1:
-    axes = [axes]
+    groups = df_x_plot['PROC_EQUIP_ID'].unique()
 
-for i, site_val in enumerate(sites):
-    # 筛选当前 site 的数据
-    df_site = df[df['site'] == site_val]
+    for i, col in enumerate(columns_to_plot):
+        for equip in groups:
+            # 【修改逻辑】：从过滤后的 df_x_plot 中取数据
+            mask = df_x_plot['PROC_EQUIP_ID'] == equip
+            series = df_x_plot.loc[mask, col].dropna()
 
-    for equip in groups:
-        # 筛选该设备的数据
-        mask = df_site['PROC_EQUIP_ID'] == equip
-        # 提取时间(X)和值(Y)，同时剔除空值
-        df_plot = df_site[mask][['X_TIME', 'SPC_Value']].dropna()
-
-        if len(df_plot) > 0:
-            axes[i].plot(df_plot['X_TIME'], df_plot['SPC_Value'],
-                         linewidth=0.8, label=str(equip), alpha=0.7)
-
-    axes[i].set_ylabel(f'Site {site_val}\nSPC_Value', fontsize=12)
-    axes[i].tick_params(labelsize=10)
-    axes[i].grid(True, alpha=0.3)
-    axes[i].legend(loc='upper right', fontsize=8, ncol=3)
-
-axes[-1].set_xlabel('X_TIME', fontsize=13)
-fig.suptitle('SPC_Value Trend by Site and Equipment', fontsize=16, y=1.02)
-
-plt.tight_layout()
-plt.show()
+            if len(series) > 0:
+                axes[i].plot(series.index, series.values, linewidth=0.5,
+                            label=str(equip), alpha=0.7)
