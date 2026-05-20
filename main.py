@@ -30,3 +30,9 @@ df[pos_cols] = df[pos_cols].astype(int)
 print("各位置行数分布:")
 print(df[pos_cols].sum())
 print(f"总行数: {len(df)}")
+
+
+columns_to_plot = ['SPC_Value']
+
+fig, axes = plt.subplots(1, 1, figsize=(20, 5), sharex=True)
+axes = [axes]   # 统一成 list,后面循环不用改
