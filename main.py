@@ -61,7 +61,7 @@ df_ml = pd.melt(
     id_vars=GROUP_KEYS + feature_cols,
     value_vars=SITE_COLS,
     var_name='site_col',
-    value_name='y'
+    value_name='SPC_Value'
 )
 
 # 'SITE_1' → 1, 'SITE_2' → 2, ...
@@ -69,7 +69,7 @@ df_ml['site'] = df_ml['site_col'].str.extract(r'(\d+)').astype(int)
 df_ml = df_ml.drop(columns=['site_col'])
 
 # 删除 y 为空的行
-df_ml = df_ml.dropna(subset=['y']).reset_index(drop=True)
+df_ml = df_ml.dropna(subset=['SPC_Value']).reset_index(drop=True)
 
 print(f"最终 site 级样本数: {len(df_ml)}")
 print(df_ml.head(10))
