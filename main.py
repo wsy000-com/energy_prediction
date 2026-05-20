@@ -1,97 +1,98 @@
-# ============ 把 wafer 级 SPC_Value 拆成 site 级 ============
-EXPECTED_SITES = 5  # 一个 wafer 期望测多少 site,以后换数据集改这个就行
-
-# 1. 只保留有 SPC 测量的行
-df = df.dropna(subset=['SPC_Value']).copy()
-df = df.sort_index()
-
-# 2. 诊断:每个 wafer 几行 + 相邻时间间隔(用来确认场景,不写死秒数)
+# ============ 准备工作：定义分组键和检查范围 ============
 group_keys = ['PROC_EQUIP_ID', 'LOT_ID', 'WAFER_ID']
-wafer_size = df.groupby(group_keys).size()
-print("每个 wafer 的 SPC 行数分布(SPC_Value 非空):")
-print(wafer_size.value_counts().sort_index())
-print(f"总 wafer 数: {len(wafer_size)}\n")
+site_cols = ['SITE_1', 'SITE_2', 'SITE_3', 'SITE_4', 'SITE_5']
 
-gaps_by_n = {}
+print("\n" + "=" * 60)
+print("开始排查 Wafer 内部存在波动的列 (非唯一列)...")
+print("=" * 60)
 
-# =========== 新增 1：准备一个字典，记录同一个 wafer 内部发生变化的列 ===========
+# ============ 第一步：诊断非唯一列 ============
 varying_cols_summary = {}
-# =========================================================================
+# 为了排查时间，我们把 index (X_TIME) 也临时重置为列一起检查
+df_check = df.reset_index()
+check_cols = columns_to_plot + ['X_TIME'] if 'X_TIME' in df_check.columns else columns_to_plot
 
-for name, g in df.groupby(group_keys):
-    if len(g) < 2:
-        continue
-    gaps = g.index.to_series().diff().dt.total_seconds().dropna().tolist()
-    gaps_by_n.setdefault(len(g), []).extend(gaps)
+# 按 Wafer 分组，找出组内唯一值数量 > 1 的列
+nunique_per_group = df_check.groupby(group_keys)[check_cols].nunique(dropna=True)
+varying_cols = nunique_per_group.columns[nunique_per_group.max() > 1].tolist()
 
-    # =========== 新增 2：排查这几行里，哪些列的值不一样 =======================
-    for col in g.columns:
-        unique_vals = g[col].dropna().unique()
-        if len(unique_vals) > 1:  # 如果这一列在同一个 wafer 里有 >1 个不同的值
-            if col not in varying_cols_summary:
-                varying_cols_summary[col] = set()
-            # 将不同的值转成 tuple 存入 set 中去重
-            varying_cols_summary[col].add(tuple(unique_vals))
-    # =========================================================================
+if varying_cols:
+    print(f"⚠️ 发现 {len(varying_cols)} 个列在同一个 Wafer 内部的值不唯一：")
 
-# =========== 新增 3：打印出哪些列不同，以及不同的值具体是什么 ===============
-print("\n[诊断] 同一 wafer 内部存在差异的列 (以及差异值示例):")
-if not varying_cols_summary:
-    print("  未发现差异列(完全一致)")
+    # 提取几个具体波动的例子展示给用户
+    for col in varying_cols:
+        print(f"\n  => 波动列名: {col}")
+        # 找到哪些 Wafer 在这个列上发生了波动
+        fluctuating_groups = nunique_per_group[nunique_per_group[col] > 1].index
+
+        # 打印前 3 个示例
+        for i, group_idx in enumerate(fluctuating_groups[:3], 1):
+            # 获取这个特定 Wafer 的数据并查看不同值
+            if isinstance(group_idx, tuple):
+                # 构建查询条件
+                mask = (df_check[group_keys[0]] == group_idx[0]) & \
+                       (df_check[group_keys[1]] == group_idx[1]) & \
+                       (df_check[group_keys[2]] == group_idx[2])
+                vals = df_check.loc[mask, col].dropna().unique()
+            else:
+                vals = df_check.loc[df_check[group_keys[0]] == group_idx, col].dropna().unique()
+
+            # 如果是时间列，稍微格式化一下方便阅读
+            if col == 'X_TIME':
+                vals_str = [pd.to_datetime(v).strftime('%H:%M:%S') for v in vals]
+                print(f"       示例 Wafer {i} 的时间跨度: {vals_str}")
+            else:
+                print(f"       示例 Wafer {i} 的变化值: {tuple(vals)}")
+
+        if len(fluctuating_groups) > 3:
+            print(f"       ... (该列在总计 {len(fluctuating_groups)} 个 Wafer 中存在波动)")
 else:
-    for col, val_sets in varying_cols_summary.items():
-        print(f"  => 列名: {col}")
-        # 为了避免像 Timestamp 这种每行都不同的列导致刷屏，限制只打印 3 个示例
-        sample_vals = list(val_sets)[:3]
-        for i, vals in enumerate(sample_vals, 1):
-            print(f"       示例 wafer {i} 中出现的值: {vals}")
-        if len(val_sets) > 3:
-            print(f"       ... (该列在 {len(val_sets)} 个 wafer 中都表现出了不一致)")
-print("-" * 50)
-# =========================================================================
+    print("✅ 未发现波动列，所有特征在一个 Wafer 内部都是绝对一致的。")
 
-print("\n各行数 wafer 的相邻时间间隔统计:")
-for n in sorted(gaps_by_n):
-    s = pd.Series(gaps_by_n[n])
-    print(f"  {n} 行 wafer:gap 中位数 {s.median():.1f}s,均值 {s.mean():.1f}s,std {s.std():.2f}s,max {s.max():.1f}s")
+print(
+    "\n(请根据上述打印结果评估：如果是时间波动或轻微的数值波动，采用均值聚合是合理的；如果分类列出现波动，建议排查原始数据。)")
 
-# 自动估算基准间隔 T:优先用满测 wafer 的 gap 中位数,不写死
-if EXPECTED_SITES in gaps_by_n:
-    T = float(pd.Series(gaps_by_n[EXPECTED_SITES]).median())
-else:
-    T = float(pd.Series([g for gs in gaps_by_n.values() for g in gs]).median())
-print(f"\n基准间隔 T = {T:.1f}s(自动估算)")
+# ============ 第二步：按 Wafer 去重并转化为长表 ============
+print("\n" + "=" * 60)
+print("开始进行 Wafer 级去重与 Site 级长表展开...")
+print("=" * 60)
 
-# 警告:如果某类 wafer 的 max gap 明显超过 1.5T,说明可能是中间漏测(场景 B),需要另写逻辑
-for n, gs in gaps_by_n.items():
-    if max(gs) > 1.5 * T:
-        print(f"⚠️  {n} 行 wafer 出现 gap > 1.5T 的情况,可能是中间漏测,需要人工确认")
+# 构建聚合字典
+agg_funcs = {}
+for col in columns_to_plot:
+    if col in varying_cols:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            agg_funcs[col] = 'mean'  # 如果是数值型波动，取均值平滑
+        else:
+            agg_funcs[col] = 'first'  # 如果是分类型波动，强制取第一条
+    else:
+        agg_funcs[col] = 'first'  # 完全不波动的列，取 first 性能最高
 
-# 3. 给每行分配 site_order
-df['_n'] = df.groupby(group_keys)['SPC_Value'].transform('size')
-df['_cc'] = df.groupby(group_keys).cumcount() + 1
-# ===== 方案 A(默认启用):不完整 wafer 缺的是末尾(缺 site_5,或 site_4-5)=====
-df['site_order'] = df['_cc']
-# ===== 方案 B(暂时注释):不完整 wafer 缺的是开头(缺 site_1,或 site_1-2)=====
-# df['site_order'] = df['_cc'] + (EXPECTED_SITES - df['_n'])
-df = df.drop(columns=['_n', '_cc'])
+# 目标变量列（Site测量值通常在 Wafer 级别是不变的，如果是通过 join 带上来的）
+for col in site_cols:
+    if col in df.columns:
+        agg_funcs[col] = 'first'
 
-df = df[df['site_order'].between(1, EXPECTED_SITES)].copy()
+# 执行去重：每个 Wafer 只保留 1 行物理意义上的特征
+df_wafer = df.groupby(group_keys, dropna=False).agg(agg_funcs).reset_index()
 
-# 4. 用 site_order 取对应的 SITE_x 值,覆盖原 SPC_Value
-site_cols = [f'SITE_{i}' for i in range(1, EXPECTED_SITES + 1)]
-site_arr = df[site_cols].values
-df['SPC_Value'] = site_arr[np.arange(len(df)), df['site_order'].values - 1]
+# 转换为长表 (Melt)
+df_ml = pd.melt(
+    df_wafer,
+    id_vars=group_keys + columns_to_plot,
+    value_vars=site_cols,
+    var_name='Site_Position',
+    value_name='y'
+)
 
-# 5. site_order one-hot
-df = pd.get_dummies(df, columns=['site_order'], prefix='pos')
-for i in range(1, EXPECTED_SITES + 1):
-    col = f'pos_{i}'
-    if col not in df.columns:
-        df[col] = 0
-pos_cols = [f'pos_{i}' for i in range(1, EXPECTED_SITES + 1)]
-df[pos_cols] = df[pos_cols].astype(int)
+# 清洗空值
+df_ml = df_ml.dropna(subset=['y']).copy()
 
-print("\n拆分后各位置行数分布:")
-print(df[pos_cols].sum())
-print(f"总行数: {len(df)}")
+# 将 Site_Position 转为 One-Hot 编码 (转为 0 和 1)
+df_ml = pd.get_dummies(df_ml, columns=['Site_Position'], prefix='pos')
+pos_cols = [col for col in df_ml.columns if col.startswith('pos_SITE_')]
+df_ml[pos_cols] = df_ml[pos_cols].astype(int)
+
+print(f"✅ 转换完成！")
+print(f"  - 去重后的独立 Wafer 总数: {len(df_wafer)}")
+print(f"  - 展开后的 Site 级样本总数 (供 XGBoost 训练): {len(df_ml)}")
